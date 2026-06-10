@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import cvxpy as cp
 import matplotlib.animation as animation
 import pickle
+from matplotlib.patches import Circle
 import os
 
 
@@ -20,7 +21,7 @@ os.makedirs(FIGURES_DIR, exist_ok=True)
 # Parameters
 # ============================================================
 N_ROBOTS = 1
-SHOW_FIGURE = False
+SHOW_FIGURE = True
 SIM_IN_REAL_TIME = False
 
 N_EPISODES = 50
@@ -105,7 +106,7 @@ COLLAPSE_ON_PICKUP = True
 # ============================================================
 
 WALL_COST = 5.0
-NON_TARGET_COST = 5
+NON_TARGET_COST = 3
 TARGET_SIGMA = SENSOR_RADIUS/2
 SUCCESS_HOLD_STEPS = 1
 
@@ -707,23 +708,7 @@ def apply_unicycle_velocity(r, v, omega):
         [omega],
     ])
 
-    radius = r.wheel_radius
-    length = r.base_length
-
-    wheel_vel = np.vstack((
-        1 / (2 * radius) * (2 * dxu[0, :] - length * dxu[1, :]),
-        1 / (2 * radius) * (2 * dxu[0, :] + length * dxu[1, :]),
-    ))
-
-    too_fast = np.abs(wheel_vel) > r.max_wheel_velocity
-    wheel_vel[too_fast] = (
-        r.max_wheel_velocity - 0.001
-    ) * np.sign(wheel_vel[too_fast])
-
-    dxu_limited = np.vstack((
-        radius / 2 * (wheel_vel[0, :] + wheel_vel[1, :]),
-        radius / length * (wheel_vel[1, :] - wheel_vel[0, :]),
-    ))
+    dxu_limited = r._threshold(dxu)
 
     r.set_velocities(np.arange(N_ROBOTS), dxu_limited)
     r.step()
@@ -734,79 +719,72 @@ def apply_unicycle_velocity(r, v, omega):
 # ============================================================
 
 def add_landmark_markers(r, key_candidates, door_candidates, true_key, true_door):
-    marker_size_candidate = determine_marker_size(r, PICKUP_RADIUS / 2)
-    marker_size_true_key = determine_marker_size(r, 0.05)
-    marker_size_true_door = determine_marker_size(r, 0.03)
+    ax = r._axes_handle
 
     for p in key_candidates:
-        r.axes.scatter(
-            p[0],
-            p[1],
-            s=marker_size_candidate,
-            marker="o",
-            facecolors="none",
-            edgecolors="orange",
-            linewidth=2,
-            zorder=-2,
+        ax.add_patch(
+            Circle(
+                (p[0], p[1]),
+                radius=PICKUP_RADIUS,
+                fill=False,
+                edgecolor="orange",
+                linewidth=2,
+                zorder=-2,
+            )
         )
-
 
     for p in door_candidates:
-        r.axes.scatter(
-            p[0],
-            p[1],
-            s=marker_size_candidate,
-            marker="o",
-            facecolors="none",
-            edgecolors="purple",
-            linewidth=2,
-            zorder=-2,
+        ax.add_patch(
+            Circle(
+                (p[0], p[1]),
+                radius=DOOR_RADIUS,
+                fill=False,
+                edgecolor="purple",
+                linewidth=2,
+                zorder=-2,
+            )
         )
 
-    r.axes.scatter(
+    ax.scatter(
         true_key[0],
         true_key[1],
-        s=marker_size_true_key,
         marker="*",
         color="orange",
         edgecolor="black",
-        linewidth=1,
-        zorder=-1,
+        s=400,
+        label="true key",
     )
 
-    r.axes.scatter(
+    ax.scatter(
         true_door[0],
         true_door[1],
-        s=marker_size_true_door,
         marker="D",
         color="purple",
         edgecolor="black",
-        linewidth=1,
-        zorder=-1,
+        s=200,
+        label="true door",
     )
 
 
 def add_sensor_marker(r, position):
-    marker_size_sensor = determine_marker_size(r, SENSOR_RADIUS / 2)
+    ax = r._axes_handle
 
-    sensor_marker = r.axes.scatter(
-        position[0],
-        position[1],
-        s=marker_size_sensor,
-        marker="o",
-        facecolors="none",
-        edgecolors="green",
+    sensor_marker = Circle(
+        (position[0], position[1]),
+        radius=SENSOR_RADIUS,
+        fill=False,
+        edgecolor="green",
         linewidth=1.5,
         linestyle="--",
         zorder=1,
     )
 
+    ax.add_patch(sensor_marker)
     return sensor_marker
 
 
 def update_sensor_marker(r, sensor_marker, position):
-    sensor_marker.set_offsets(position.reshape(1, 2))
-    sensor_marker.set_sizes([determine_marker_size(r, SENSOR_RADIUS / 2)])
+    sensor_marker.center = (position[0], position[1])
 
 
 # ============================================================
@@ -987,7 +965,8 @@ def run_robotarium_episode(
         sim_in_real_time=SIM_IN_REAL_TIME,
     )
 
-    add_landmark_markers(r, key_candidates, door_candidates, true_key, true_door)
+    if SHOW_FIGURE:
+        add_landmark_markers(r, key_candidates, door_candidates, true_key, true_door)
 
     b_key, b_door = initial_beliefs(key_candidates, door_candidates)
 
@@ -1017,7 +996,9 @@ def run_robotarium_episode(
     position = x_uni[:2, 0]
     theta = wrap_angle(x_uni[2, 0])
 
-    sensor_marker = add_sensor_marker(r, position)
+    sensor_marker = None
+    if SHOW_FIGURE:
+        sensor_marker = add_sensor_marker(r, position)
 
     b_key, b_door, key_obs, door_obs = update_beliefs(
         b_key,
@@ -1043,7 +1024,7 @@ def run_robotarium_episode(
         )
 
         video_context = video_writer.saving(
-            r.axes.figure,
+            r._fig,
             video_name,
             dpi=200,
         )
@@ -1108,7 +1089,8 @@ def run_robotarium_episode(
             position = x_uni[:2, 0]
             theta = wrap_angle(x_uni[2, 0])
 
-            update_sensor_marker(r, sensor_marker, position)
+            if SHOW_FIGURE and sensor_marker is not None:
+                update_sensor_marker(r, sensor_marker, position)
 
             if (key_visible_time is None) and key_obs == true_key_index:
                 key_visible_time = gate_step + 1
@@ -1160,8 +1142,10 @@ def run_robotarium_episode(
     print("Final door belief:", b_door)
     print("-----End episode ", ep+1, "/", N_EPISODES, "-----")
 
-    r.call_at_scripts_end()
-    plt.close(r.axes.figure)
+    r.debug()
+
+    if SHOW_FIGURE and hasattr(r, "_fig"):
+        plt.close(r._fig)
 
     trajectory = np.array(trajectory)
     weights_history = np.array(weights_history)
