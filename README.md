@@ -21,24 +21,6 @@ The main simulation is implemented in `robotarium_simulations.py`, and the plott
 
 Runs the Robotarium experiments. It samples randomized key and door candidate locations, runs paired experiments with and without the epistemic term, and saves per-episode data and aggregate metrics.
 
-The script currently runs both conditions:
-
-```python
-stats_epi = run_robotarium_configs(
-    configs,
-    use_epistemic=True,
-    deterministic=False,
-    prefix="robotarium_epi",
-)
-
-stats_no_epi = run_robotarium_configs(
-    configs,
-    use_epistemic=False,
-    deterministic=False,
-    prefix="robotarium_no_epi",
-)
-```
-
 For each episode, both conditions use the same sampled environment configuration: candidate positions, true key, true door, initial robot pose, and episode seed.
 
 The script saves:
@@ -52,7 +34,7 @@ results/robotarium_epi_all_results.pkl
 results/robotarium_no_epi_all_results.pkl
 ```
 
-It also shows and saves videos of the first episode if `SHOW_FIGURE=True` and `save_video=True`.
+It also shows and saves videos of the first episode in both cases if `SHOW_FIGURE=True` and `save_video=True`.
 
 ### `plots.py`
 
