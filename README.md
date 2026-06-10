@@ -157,24 +157,6 @@ initial_condition
 success
 ```
 
-The aggregate metrics files contain:
-
-```text
-success
-gate_steps
-key_visible_time
-door_visible_times
-success_rate
-mean_gate_steps
-std_gate_steps
-mean_key_visible
-std_key_visible
-mean_pickup
-std_pickup
-mean_door_visible
-std_door_visible
-```
-
 ## Generated files
 
 The `results/` and `figures/` directories are generated outputs.
