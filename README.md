@@ -66,7 +66,7 @@ RUN_EPISTEMIC = False
 ```
 
 We report here the two hardware videos corresponding to:
-- the experiment in Fig. 1(a) of the paper (using Full BeFree-Gate with epistemic term)
+- the experiment in Fig. 1(a) of the paper (using full BeFree-Gate with epistemic term)
   
 
 https://github.com/user-attachments/assets/060504c1-7011-4b72-a24e-640bf5f360a3
