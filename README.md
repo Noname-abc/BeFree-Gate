@@ -1,6 +1,6 @@
 # BeFree-Gate: Robotarium Key-Door Experiments
 
-This repository contains Robotarium simulations for a single-robot key-door navigation task with uncertain object identities. The robot must first identify and reach the true key, then identify and reach the true door. The experiments compare two policies:
+This repository contains simulations using the Robotarium platform [1] for a single-robot key-door navigation task with uncertain object identities. The robot must first identify and reach the true key, then identify and reach the true door. The experiments compare two policies:
 
 - **With epistemic term**: the minimization objective includes expected information gain.
 - **Without epistemic term**: the minimization objective does not include expected information gain.
@@ -51,7 +51,7 @@ figures/robotarium_no_epi_omega.pdf
 
 ### `Hardware/robotarium_hardware.py`
 
-This is the script uploaded to the Robotarium website to obtain the two hardware videos corresponding to Fig. 1(a) and Fig. 1(b) of the paper.
+This is the script uploaded to the [Robotarium website](https://www.robotarium.gatech.edu) to obtain the two hardware videos corresponding to Fig. 1(a) and Fig. 1(b) of the paper.
 
 To switch between the epistemic and non-epistemic cases, change:
 
@@ -140,11 +140,11 @@ Hardware/robotarium_hardware.py
 
 You can upload this file to the Robotarium website.
 
-The included hardware videos were obtained by running the script once for each value of `RUN_EPISTEMIC`.
+The hardware videos were obtained by running the script once for each value of `RUN_EPISTEMIC`.
 
 ## Important configuration options
 
-### Show Robotarium visualization
+### Show Robotarium visualization and save video of the first experiment
 
 ```python
 SHOW_FIGURE = True
@@ -182,4 +182,6 @@ success
 
 ## Acknowledgment
 
-This project uses the Robotarium Python simulator. If you use this repository for research, cite or acknowledge Robotarium according to the requirements of the Robotarium project and your institution.
+## References
+
+[1] S. Wilson et al., “The Robotarium: Globally Impactful Opportunities, Challenges, and Lessons Learned in Remote-Access, Distributed Control of Multirobot Systems,” *IEEE Control Systems Magazine*, vol. 40, no. 1, pp. 26–44, Feb. 2020.
