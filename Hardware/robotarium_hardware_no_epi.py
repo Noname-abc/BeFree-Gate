@@ -1,35 +1,56 @@
 import rps.robotarium as robotarium
 from rps.utilities.misc import *
+from matplotlib.patches import Circle
+
 import numpy as np
 import matplotlib.pyplot as plt
 import cvxpy as cp
-import matplotlib.animation as animation
-from matplotlib.patches import Circle
-import os
-
-
-# Directories to save video and results
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-RESULTS_DIR = os.path.join(SCRIPT_DIR, "results")
-FIGURES_DIR = os.path.join(SCRIPT_DIR, "figures")
-os.makedirs(RESULTS_DIR, exist_ok=True)
-os.makedirs(FIGURES_DIR, exist_ok=True)
 
 
 # ============================================================
-# Parameters
+# Constant-forward-speed unicycle primitives:
+#   1. keep heading
+#   2. turn counterclockwise while moving
+#   3. turn clockwise while moving
+#
+#   - Key/door identities are categorical hidden variables.
+#   - Observations are probabilistic detections, not hard reveal/eliminate.
+#   - Beliefs are updated by Bayes rule using q_y(y | z, position).
+#   - Epistemic value uses expected entropy reduction under the same q_y.
 # ============================================================
+
+FS = 24
+
+plt.rcParams.update({
+    "font.family": "serif",
+    "font.size": FS,
+    "mathtext.fontset": "cm",        # Computer Modern (LaTeX-like)
+    "axes.labelsize": FS,
+    "axes.titlesize": FS,
+    "xtick.labelsize": FS,
+    "ytick.labelsize": FS,
+    "legend.fontsize": FS,
+    "figure.titlesize": FS,
+})
+
+# ============================================================
+# Robotarium / workspace parameters
+# ============================================================
+
 N_ROBOTS = 1
-SHOW_FIGURE = False
-SIM_IN_REAL_TIME = False
+SHOW_FIGURE = True
+SIM_IN_REAL_TIME = True
 
-N_EPISODES = 50
+RUN_EPISTEMIC = False
+
+N_EPISODES = 1
 
 BOUNDARY = np.array([-1.6, 1.6, -1.0, 1.0])
 X_MIN, X_MAX, Y_MIN, Y_MAX = BOUNDARY
+
 ROBOTARIUM_DT = 0.033
 
-NUM_CANDIDATES = 5  # Number of candidate keys and doors
+NUM_CANDIDATES = 5
 
 # Planning lookahead time used only in the action scoring model.
 # This can be larger than the physical step if you want the one-step score
@@ -103,10 +124,10 @@ COLLAPSE_ON_PICKUP = True
 # ============================================================
 # Cost parameters
 # ============================================================
-
 WALL_COST = 8.0
 NON_TARGET_COST = 4
 TARGET_SIGMA = SENSOR_RADIUS/2
+
 SUCCESS_HOLD_STEPS = 1
 
 
@@ -116,7 +137,7 @@ SUCCESS_HOLD_STEPS = 1
 
 FORWARD_SPEED = 0.2
 
-OMEGA_MAX = 3.6     # max Robotarium rotation
+OMEGA_MAX = 3.6 # max Robotarium rotation
 N_OMEGA_ACTIONS = 37
 OMEGA_GRID = np.linspace(-OMEGA_MAX, OMEGA_MAX, N_OMEGA_ACTIONS)
 N_ACTIONS = len(OMEGA_GRID)
@@ -245,13 +266,10 @@ def observation_likelihood(observation, position, candidates):
 
     for z in range(n):
         p_det = detection_probability(position, candidates[z])
-
         if observation is None:
             likelihood[z] = 1.0 - p_det
-
         elif z == observation:
             likelihood[z] = p_det
-
         else:
             likelihood[z] = 0
 
@@ -324,18 +342,22 @@ def update_beliefs(
 
 
 # ============================================================
-# Expected information gain
+# Expected information gain under the same soft observation model
 # ============================================================
 
 def object_information_gain(position, belief, candidates):
-
+    """
+    Expected entropy reduction:
+        IG = H[b(z)] - E_{y ~ q_y(y | b, position)} H[b(z | y)]
+    This uses the same q_y as the online belief update.
+    """
     prior_H = entropy(belief)
     n = len(candidates)
 
     # All possible observations: None (∅) plus each candidate index.
     observations = [None] + list(range(n))
 
-    expected_H_post = 0.0
+    expected_H_post = 0.0   # initialize
 
     for obs in observations:
         likelihood = observation_likelihood(obs, position, candidates)
@@ -399,6 +421,7 @@ def target_score(position, b_key, b_door, carrying_key, key_candidates, door_can
     return score
 
 
+
 def instrumental_cost(
     position,
     omega,
@@ -418,7 +441,6 @@ def instrumental_cost(
         door_candidates,
     )
 
-    #state_cost = NON_TARGET_COST * (1.0 - score)
     state_cost = NON_TARGET_COST * (- score)
 
     wall_cost = WALL_COST * compute_boundary_cost(
@@ -435,7 +457,9 @@ def instrumental_cost(
 # ============================================================
 
 def unicycle_position_step(position, theta, omega, dt):
-    # Predict position after dt with constant forward speed and angular velocity.
+    """
+    Predict position after dt with constant forward speed and angular velocity.
+    """
     x, y = position
 
     if abs(omega) < 1e-8:
@@ -631,9 +655,11 @@ def action_scores_from_value(
 # ============================================================
 # BeFree-Gate optimizer
 # ============================================================
-
 def solve_befree_gate(action_scores, pi_omega):
+    # Use raw scores if you want absolute cost scale to matter.
+    # Use normalized scores if the optimization becomes numerically too sharp.
     scores = action_scores
+    # scores = normalize_scores(action_scores)
 
     w = cp.Variable(N_PRIMITIVES)
     p_comb = pi_omega.T @ w
@@ -660,8 +686,6 @@ def solve_befree_gate(action_scores, pi_omega):
 
     if w.value is None:
         raise RuntimeError("CVX optimization failed.")
-
-    #print(w.value)
 
     w_opt = np.maximum(w.value, 0.0)
     w_opt = w_opt / np.sum(w_opt)
@@ -817,8 +841,13 @@ def sample_candidate_positions(
     margin=0.25,
     min_candidate_separation=0.35,
 ):
-    # Sample key and door candidate locations for one episode.
+    """
+    Sample key and door candidate locations for one episode.
 
+    Keys are sampled mostly on the left side.
+    Doors are sampled mostly on the right side.
+    This preserves the key-then-door task structure while changing locations.
+    """
     points = []
 
     def far_enough(p, existing):
@@ -904,7 +933,7 @@ def sample_robotarium_episode_configs(n_episodes, seed):
 
 
 # ============================================================
-# Robotarium episode
+# One Robotarium episode
 # ============================================================
 
 def run_robotarium_episode(
@@ -917,9 +946,6 @@ def run_robotarium_episode(
     true_key_index=TRUE_KEY_INDEX,
     true_door_index=TRUE_DOOR_INDEX,
     seed=None,
-    save_prefix="befree_robotarium",
-    save_video=False,
-    video_name="robotarium_first_episode.mp4",
 ):
     if key_candidates is None:
         key_candidates = KEY_CANDIDATES.copy()
@@ -933,7 +959,6 @@ def run_robotarium_episode(
 
     if initial_condition is None:
         initial_condition = INITIAL_CONDITION.copy()
-
     else:
         initial_condition = np.array(initial_condition, dtype=float, copy=True)
 
@@ -948,11 +973,10 @@ def run_robotarium_episode(
         show_figure=SHOW_FIGURE,
         initial_conditions=initial_condition.copy(),
         sim_in_real_time=SIM_IN_REAL_TIME,
-        skip_initialization=True,
+        skip_initialization=True
     )
 
-    if SHOW_FIGURE:
-        add_landmark_markers(r, key_candidates, door_candidates, true_key, true_door)
+    add_landmark_markers(r, key_candidates, door_candidates, true_key, true_door)
 
     b_key, b_door = initial_beliefs(key_candidates, door_candidates)
 
@@ -973,19 +997,11 @@ def run_robotarium_episode(
     door_visible_time = None
     success_time = None
 
-    print("\n-----Start episode ", ep+1, "/", N_EPISODES, "-----")
-    print("Epistemic term:", use_epistemic)
-    print("True key index:", true_key_index)
-    print("True door index:", true_door_index)
-
     x_uni = r.get_poses()
-
     position = x_uni[:2, 0]
     theta = wrap_angle(x_uni[2, 0])
 
-    sensor_marker = None
-    if SHOW_FIGURE:
-        sensor_marker = add_sensor_marker(r, position)
+    sensor_marker = add_sensor_marker(r, position)
 
     b_key, b_door, key_obs, door_obs = update_beliefs(
         b_key,
@@ -1002,140 +1018,98 @@ def run_robotarium_episode(
     key_observation_history.append(key_obs)
     door_observation_history.append(door_obs)
 
-    video_context = None
+    for gate_step in range(MAX_GATE_STEPS):
+        trajectory.append(position.copy())
+        key_entropy_history.append(entropy(b_key))
+        door_entropy_history.append(entropy(b_door))
+        theta_history.append(theta)
 
-    if save_video and SHOW_FIGURE:
-        video_writer = animation.FFMpegWriter(
-            fps=30,
-            metadata=dict(artist="Robotarium"),
-            bitrate=1800,
+        # Door success condition.
+        if carrying_key and np.linalg.norm(position - true_door) <= DOOR_RADIUS:
+            success_hold_counter += 1
+            success_time = gate_step
+            print("Door accessed at step", success_time)
+            if success_hold_counter >= SUCCESS_HOLD_STEPS:
+                success = True
+                break
+        else:
+            success_hold_counter = 0
+
+        action_scores, V = action_scores_from_value(
+            position,
+            theta,
+            b_key,
+            b_door,
+            carrying_key,
+            key_candidates,
+            door_candidates,
+            use_epistemic=use_epistemic,
         )
 
-        video_context = video_writer.saving(
-            r._fig,
-            video_name,
-            dpi=200,
+        w_opt, p_action = solve_befree_gate(
+            action_scores,
+            PI_OMEGA,
         )
 
-        video_context.__enter__()
-        video_writer.grab_frame()
-    else:
-        video_writer = None
+        omega_cmd, action_index = sample_omega(
+            p_action,
+            rng,
+            deterministic=deterministic,
+        )
 
-    try:
-        for gate_step in range(MAX_GATE_STEPS):
-            trajectory.append(position.copy())
-            key_entropy_history.append(entropy(b_key))
-            door_entropy_history.append(entropy(b_door))
-            theta_history.append(theta)
-
-            # Door success condition
-            if carrying_key and np.linalg.norm(position - true_door) <= DOOR_RADIUS:
-                success_hold_counter += 1
-                success_time = gate_step
-                print("Door accessed at step", success_time)
-                if success_hold_counter >= SUCCESS_HOLD_STEPS:
-                    success = True
-                    break
-            else:
-                success_hold_counter = 0
-
-            action_scores, V = action_scores_from_value(
-                position,
-                theta,
-                b_key,
-                b_door,
-                carrying_key,
-                key_candidates,
-                door_candidates,
-                use_epistemic=use_epistemic,
-            )
-
-            w_opt, p_action = solve_befree_gate(
-                action_scores,
-                PI_OMEGA,
-            )
-
-            omega_cmd, action_index = sample_omega(
-                p_action,
-                rng,
-                deterministic=deterministic,
-            )
-
-            weights_history.append(w_opt.copy())
-            omega_history.append(omega_cmd)
-
-            apply_unicycle_velocity(
-                r,
-                FORWARD_SPEED,
-                omega_cmd,
-            )
-            x_uni = r.get_poses()
-
-            if save_video and SHOW_FIGURE:
-                video_writer.grab_frame()
-
-            position = x_uni[:2, 0]
-            theta = wrap_angle(x_uni[2, 0])
-
-            if SHOW_FIGURE and sensor_marker is not None:
-                update_sensor_marker(r, sensor_marker, position)
-
-            if (key_visible_time is None) and key_obs == true_key_index:
-                key_visible_time = gate_step + 1
-
-            if (door_visible_time is None) and door_obs == true_door_index:
-                door_visible_time = gate_step + 1
-
-            # Physical pickup after movement confirms the key
-            if (not carrying_key) and np.linalg.norm(position - true_key) <= PICKUP_RADIUS:
-                carrying_key = True
-                pickup_time = gate_step + 1
-                if COLLAPSE_ON_PICKUP:
-                    b_key = np.zeros_like(b_key)
-                    b_key[true_key_index] = 1.0
-                print("Key picked up at step", pickup_time)
-
-            # Soft Bayesian observation update after movement
-            b_key, b_door, key_obs, door_obs = update_beliefs(
-                b_key,
-                b_door,
-                carrying_key,
-                position,
-                key_candidates,
-                door_candidates,
-                true_key_index,
-                true_door_index,
-                rng
-            )
-
-            key_observation_history.append(key_obs)
-            door_observation_history.append(door_obs)
+        weights_history.append(w_opt.copy())
+        omega_history.append(omega_cmd)
 
         apply_unicycle_velocity(
             r,
-            0.0,
-            0.0,
+            FORWARD_SPEED,
+            omega_cmd,
+        )
+        x_uni = r.get_poses()
+
+        position = x_uni[:2, 0]
+        theta = wrap_angle(x_uni[2, 0])
+
+        update_sensor_marker(r, sensor_marker, position)
+
+        if key_visible_time is None and key_obs == true_key_index:
+            key_visible_time = gate_step + 1
+
+        if door_visible_time is None and door_obs == true_door_index:
+            door_visible_time = gate_step + 1
+
+        # Physical pickup after movement confirms the key.
+        if (not carrying_key) and np.linalg.norm(position - true_key) <= PICKUP_RADIUS:
+            carrying_key = True
+            pickup_time = gate_step + 1
+            if COLLAPSE_ON_PICKUP:
+                b_key = np.zeros_like(b_key)
+                b_key[true_key_index] = 1.0
+            print("Key picked up at step", pickup_time)
+
+        # Soft Bayesian observation update after movement.
+        b_key, b_door, key_obs, door_obs = update_beliefs(
+            b_key,
+            b_door,
+            carrying_key,
+            position,
+            key_candidates,
+            door_candidates,
+            true_key_index,
+            true_door_index,
+            rng
         )
 
-    finally:
-        if save_video and SHOW_FIGURE and (video_context is not None):
-            video_context.__exit__(None, None, None)
+        key_observation_history.append(key_obs)
+        door_observation_history.append(door_obs)
 
-    print("Success:", success)
-    print("Total steps:", len(trajectory))
-    print("Key visible time:", key_visible_time)
-    print("Key pickup time:", pickup_time)
-    print("Door visible time:", door_visible_time)
-    print("Door access time:", success_time)
-    print("Final key belief:", b_key)
-    print("Final door belief:", b_door)
-    print("-----End episode ", ep+1, "/", N_EPISODES, "-----")
+    apply_unicycle_velocity(
+        r,
+        0.0,
+        0.0,
+    )
 
     r.debug()
-
-    if SHOW_FIGURE and hasattr(r, "_fig"):
-        plt.close(r._fig)
 
     trajectory = np.array(trajectory)
     weights_history = np.array(weights_history)
@@ -1143,39 +1117,6 @@ def run_robotarium_episode(
     key_entropy_history = np.array(key_entropy_history)
     door_entropy_history = np.array(door_entropy_history)
     theta_history = np.array(theta_history)
-
-    data_file = os.path.join(RESULTS_DIR, f"{save_prefix}_data.npz")
-
-    np.savez(
-        data_file,
-        trajectory=trajectory,
-        weights=weights_history,
-        omega=omega_history,
-        theta=theta_history,
-        key_entropy=key_entropy_history,
-        door_entropy=door_entropy_history,
-        key_candidates=key_candidates,
-        door_candidates=door_candidates,
-        true_key=true_key,
-        true_door=true_door,
-        true_key_index=true_key_index,
-        true_door_index=true_door_index,
-        initial_condition=initial_condition,
-        use_epistemic=use_epistemic,
-        robotarium_dt=ROBOTARIUM_DT,
-        pickup_radius=PICKUP_RADIUS,
-        door_radius=DOOR_RADIUS,
-        x_min=X_MIN,
-        x_max=X_MAX,
-        y_min=Y_MIN,
-        y_max=Y_MAX,
-        primitive_names=np.array(PRIMITIVE_NAMES),
-        key_visible_time=MAX_GATE_STEPS if key_visible_time is None else key_visible_time,
-        pickup_time=MAX_GATE_STEPS if pickup_time is None else pickup_time,
-        door_visible_time=MAX_GATE_STEPS if door_visible_time is None else door_visible_time,
-        door_access_time=MAX_GATE_STEPS if success_time is None else success_time,
-        success=success,
-    )
 
     return {
         "success": success,
@@ -1227,9 +1168,6 @@ def run_robotarium_configs(
             true_key_index=cfg["true_key_index"],
             true_door_index=cfg["true_door_index"],
             seed=cfg["seed"],
-            save_prefix=f"{prefix}_ep{ep:03d}",
-            save_video=(ep == 0),   # Save video of the first episode only
-            video_name=os.path.join(FIGURES_DIR, f"{prefix}_video.mp4"),
         )
 
         result.update(cfg)
@@ -1260,60 +1198,17 @@ def run_robotarium_configs(
     stats = {
         "results": results,
         "success_rate": success_rate,
-
         "mean_gate_steps": np.mean(gate_steps),
         "std_gate_steps": np.std(gate_steps),
-
         "mean_key_visible": np.mean(key_times),
         "std_key_visible": np.std(key_times),
-
         "mean_pickup": np.mean(pickup_times),
         "std_pickup": np.std(pickup_times),
-
         "mean_door_visible": np.mean(door_times),
         "std_door_visible": np.std(door_times),
-
-        # Since gate_steps equals door access in your setup.
-        "mean_door_access": np.mean(gate_steps),
-        "std_door_access": np.std(gate_steps),
-
         "use_epistemic": use_epistemic,
         "prefix": prefix,
     }
-
-    np.savez_compressed(
-        os.path.join(RESULTS_DIR, f"{prefix}_metrics.npz"),
-
-        # Raw per-episode arrays for statistical tests.
-        success=np.array([r["success"] for r in results]),
-        gate_steps=np.array(gate_steps),
-        key_visible_times=np.array(key_times),
-        pickup_times=np.array(pickup_times),
-        door_visible_times=np.array(door_times),
-
-        # Alias: in your setup, door access equals gate steps.
-        door_access_times=np.array(gate_steps),
-
-        # Aggregate descriptive statistics.
-        success_rate=success_rate,
-
-        mean_gate_steps=np.mean(gate_steps),
-        std_gate_steps=np.std(gate_steps),
-
-        mean_key_visible=np.mean(key_times),
-        std_key_visible=np.std(key_times),
-
-        mean_pickup=np.mean(pickup_times),
-        std_pickup=np.std(pickup_times),
-
-        mean_door_visible=np.mean(door_times),
-        std_door_visible=np.std(door_times),
-
-        mean_door_access=np.mean(gate_steps),
-        std_door_access=np.std(gate_steps),
-
-        use_epistemic=use_epistemic,
-    )
 
     return stats
 
@@ -1331,31 +1226,7 @@ if __name__ == "__main__":
 
     stats_epi = run_robotarium_configs(
         configs,
-        use_epistemic=True,
+        use_epistemic=RUN_EPISTEMIC,
         deterministic=False,
         prefix="robotarium_epi",
     )
-
-    stats_no_epi = run_robotarium_configs(
-        configs,
-        use_epistemic=False,
-        deterministic=False,
-        prefix="robotarium_no_epi",
-    )
-
-    print("\nRobotarium summary")
-    print("------------------")
-
-    print("With epistemic term:")
-    print("  success rate:", stats_epi["success_rate"])
-    print("  mean steps:", stats_epi["mean_gate_steps"])
-    print("  mean key visible:", stats_epi["mean_key_visible"])
-    print("  mean pickup time:", stats_epi["mean_pickup"])
-    print("  mean door visible:", stats_epi["mean_door_visible"])
-
-    print("Without epistemic term:")
-    print("  success rate:", stats_no_epi["success_rate"])
-    print("  mean steps:", stats_no_epi["mean_gate_steps"])
-    print("  mean key visible:", stats_no_epi["mean_key_visible"])
-    print("  mean pickup time:", stats_no_epi["mean_pickup"])
-    print("  mean door visible:", stats_no_epi["mean_door_visible"])

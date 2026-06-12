@@ -2,6 +2,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+from scipy.stats import wilcoxon
 
 FS = 24
 
@@ -132,25 +133,8 @@ def print_metrics(metrics_file, label):
 
     print(f"First door sensed: {mean_door_visible:.2f} +/- {std_door_visible:.2f}")
 
-    '''if mean_door_access is not None:
-        print(f"Door access: {mean_door_access:.2f} +/- {std_door_access:.2f}")'''
-
     if mean_pickup is not None:
         print(f"Mean sensed-to-pickup delay: {mean_pickup - mean_key_visible:.2f}")
-
-    '''if mean_door_access is not None:
-        print(f"Mean sensed-to-access delay: {mean_door_access - mean_door_visible:.2f}")'''
-
-    '''print("Raw gate steps:", gate_steps)
-    print("Raw key-sensed times:", key_visible_times)
-
-    if pickup_times is not None:
-        print("Raw pickup times:", pickup_times)
-
-    print("Raw door-sensed times:", door_visible_times)'''
-
-    '''if door_access_times is not None:
-        print("Raw door-access times:", door_access_times)'''
 
 
 def plot_trajectory(data_file, output_file):
@@ -278,6 +262,50 @@ def plot_weights(data_file, output_file):
     plt.close(fig)
 
 
+def plot_entropy(data_file, output_file):
+    data = np.load(data_file, allow_pickle=True)
+
+    key_entropy = data["key_entropy"]
+    door_entropy = data["door_entropy"]
+    dt = float(data["robotarium_dt"])
+
+    time = np.arange(len(key_entropy)) * dt
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+
+    ax.plot(
+        time,
+        key_entropy,
+        linewidth=2,
+        label=r"$H(b^{\mathrm{K}})$",
+        color="tab:orange",
+    )
+
+    ax.plot(
+        time,
+        door_entropy,
+        linewidth=2,
+        label=r"$H(b^{\mathrm{D}})$",
+        color="tab:purple",
+    )
+
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Belief entropy")
+    ax.set_xlim(0, time[-1])
+
+    # For NUM_CANDIDATES = 6, max entropy is log(6)
+    if "key_candidates" in data:
+        n_candidates = len(data["key_candidates"])
+        ax.set_ylim(-0.02, np.log(n_candidates) + 0.05)
+
+    #ax.legend(frameon=False)
+    remove_top_right(ax)
+
+    fig.tight_layout()
+    fig.savefig(output_file, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
 def plot_omega(data_file, output_file):
     data = np.load(data_file, allow_pickle=True)
 
@@ -299,15 +327,74 @@ def plot_omega(data_file, output_file):
     plt.close(fig)
 
 
+def print_p_values(epi_metrics_file, no_epi_metrics_file):
+
+    epi = np.load(epi_metrics_file, allow_pickle=True)
+    no_epi = np.load(no_epi_metrics_file, allow_pickle=True)
+
+    tests = [
+        ("door_access_times", "Door access"),
+        ("key_visible_times", "Key visible"),
+        ("pickup_times", "Key pickup"),
+        ("door_visible_times", "Door visible"),
+    ]
+
+    print("\nPaired Wilcoxon p-values")
+    print("------------------------")
+
+    for key, label in tests:
+        if key not in epi or key not in no_epi:
+            print(f"{label}: skipped, missing '{key}'")
+            continue
+
+        x = np.asarray(epi[key], dtype=float)
+        y = np.asarray(no_epi[key], dtype=float)
+
+        if len(x) != len(y):
+            print(f"{label}: skipped, different number of episodes")
+            continue
+
+        diff = x - y
+
+        if np.allclose(diff, 0.0):
+            print(f"{label}: p = 1.0  (all paired differences are zero)")
+            continue
+
+        stat, p = wilcoxon(
+            x,
+            y,
+            alternative="two-sided",
+            zero_method="wilcox"
+        )
+
+        print(f"{label}: p = {p:.4g}")
+
+
 if __name__ == "__main__":
     # Print aggregate metrics over all episodes.
+    epi_metrics_file = os.path.join(
+        RESULTS_DIR,
+        "robotarium_epi_metrics.npz",
+    )
+
+    no_epi_metrics_file = os.path.join(
+        RESULTS_DIR,
+        "robotarium_no_epi_metrics.npz",
+    )
+
     print_metrics(
-        os.path.join(RESULTS_DIR, "robotarium_epi_metrics.npz"),
+        epi_metrics_file,
         "With epistemic term",
     )
+
     print_metrics(
-        os.path.join(RESULTS_DIR, "robotarium_no_epi_metrics.npz"),
+        no_epi_metrics_file,
         "Without epistemic term",
+    )
+
+    print_p_values(
+        epi_metrics_file,
+        no_epi_metrics_file,
     )
 
     # Plot only the first episode.
@@ -331,6 +418,10 @@ if __name__ == "__main__":
     plot_omega(
         epi_first_episode,
         os.path.join(FIGURES_DIR, "robotarium_epi_omega.pdf"),
+    )
+    plot_entropy(
+        epi_first_episode,
+        os.path.join(FIGURES_DIR, "robotarium_epi_entropy.pdf"),
     )
 
     plot_trajectory(
