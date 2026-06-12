@@ -5,21 +5,23 @@ This repository contains Robotarium simulations for a single-robot key-door navi
 - **With epistemic term**: the minimization objective includes expected information gain.
 - **Without epistemic term**: the minimization objective does not include expected information gain.
 
-The main simulation is implemented in `robotarium_simulations.py`, and the plotting/metrics script is implemented in `plots.py`.
+The main simulation is implemented in `robotarium_simulations.py`, the plotting/metrics script is implemented in `plots.py`, and the Robotarium hardware script is implemented in `Hardware/robotarium_hardware.py`.
 
 ## Repository structure
 
 ```text
 .
 ├── robotarium_simulations.py
-└──plots.py
-```
+├── plots.py
+└── Hardware/
+    └── robotarium_hardware.py
+````
 
 ## Files
 
 ### `robotarium_simulations.py`
 
-Runs the Robotarium experiments. It samples randomized key and door candidate locations, runs paired experiments with and without the epistemic term, and saves per-episode data and aggregate metrics.
+Runs the Robotarium simulation experiments. It samples randomized key and door candidate locations, runs paired experiments with and without the epistemic term, and saves per-episode data and aggregate metrics.
 
 For each episode, both conditions use the same sampled environment configuration: candidate positions, true key, true door, initial robot pose, and episode seed.
 
@@ -30,11 +32,7 @@ results/robotarium_epi_ep000_data.npz
 results/robotarium_no_epi_ep000_data.npz
 results/robotarium_epi_metrics.npz
 results/robotarium_no_epi_metrics.npz
-results/robotarium_epi_all_results.pkl
-results/robotarium_no_epi_all_results.pkl
 ```
-
-It also shows and saves videos of the first episode in both cases if `SHOW_FIGURE=True` and `save_video=True`.
 
 ### `plots.py`
 
@@ -51,6 +49,36 @@ figures/robotarium_no_epi_weights.pdf
 figures/robotarium_no_epi_omega.pdf
 ```
 
+### `Hardware/robotarium_hardware.py`
+
+This is the script uploaded to the Robotarium website to obtain the two hardware videos corresponding to Fig. 1(a) and Fig. 1(b) of the paper.
+
+To switch between the epistemic and non-epistemic cases, change:
+
+```python
+RUN_EPISTEMIC = True
+```
+
+or:
+
+```python
+RUN_EPISTEMIC = False
+```
+
+We report here the two hardware videos corresponding to:
+- the experiment in Fig. 1(a) of the paper (using Full BeFree-Gate with epistemic term)
+  
+
+https://github.com/user-attachments/assets/060504c1-7011-4b72-a24e-640bf5f360a3
+
+
+- the experiment in Fig. 1(b) of the paper (without epistemic term in the objective)
+  
+
+https://github.com/user-attachments/assets/bb27df84-5b7c-473a-9cda-0117932a721e
+
+
+
 ## Requirements
 
 The code requires Python 3.10.x+ and the [Robotarium Python Simulator](https://github.com/robotarium/robotarium_python_simulator/tree/master) package, which provides the `rps` module.
@@ -61,13 +89,9 @@ Python dependencies used by the scripts include:
 numpy
 matplotlib
 cvxpy
-pickle
-os
 ```
 
-`pickle` and `os` are part of the Python standard library.
-
-A typical installation is:
+You can install them with:
 
 ```bash
 pip install numpy matplotlib cvxpy
@@ -106,6 +130,18 @@ python plots.py
 
 The script prints metrics for the two conditions and saves PDF plots in `figures/`.
 
+## Running the hardware script
+
+The hardware script is located in:
+
+```text
+Hardware/robotarium_hardware.py
+```
+
+You can upload this file to the Robotarium website.
+
+The included hardware videos were obtained by running the script once for each value of `RUN_EPISTEMIC`.
+
 ## Important configuration options
 
 ### Show Robotarium visualization
@@ -123,20 +159,6 @@ SIM_IN_REAL_TIME = False
 ```
 
 For fast offline simulations, keep this as `False`. For hardware-style or real-time execution, set it to `True`.
-
-### Epistemic vs non-epistemic policy
-
-The epistemic term is controlled by the `use_epistemic` argument:
-
-```python
-use_epistemic=True
-```
-
-or:
-
-```python
-use_epistemic=False
-```
 
 ## Saved data format
 
@@ -157,9 +179,6 @@ initial_condition
 success
 ```
 
-## Generated files
-
-The `results/` and `figures/` directories are generated outputs.
 
 ## Acknowledgment
 
